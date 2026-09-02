@@ -1,0 +1,12 @@
+# Word temporary/lock files
+~$*
+*.tmp
+*.bak
+
+# Generated output from the patent macros
+*.dict.json
+
+# Local test/debug output
+*.log
+*.err
+
