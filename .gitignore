@@ -6,7 +6,9 @@
 # Generated output from the patent macros
 *.dict.json
 
+# Confidential or non-versioned real application samples
+samples/private/
+
 # Local test/debug output
 *.log
 *.err
-

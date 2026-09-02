@@ -1,0 +1,13 @@
+* text=auto
+
+# Reviewable VBA source; build/import tooling is responsible for CRLF and GBK copies.
+*.bas text
+*.cls text
+*.frm text
+*.md text
+
+# Office packages and UserForm resources are binary.
+*.frx binary
+*.dotm binary
+*.docm binary
+*.docx binary

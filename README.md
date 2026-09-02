@@ -2,6 +2,8 @@
 
 本目录保存从本机 Word 宏模板中提取的、宏名为中文的专利申请文件撰写辅助 VBA。
 
+后续开发路线、样例要求、单入口工具面板方案和测试约定见 [AGENTS.md](AGENTS.md)。
+
 ## 已提取的中文入口宏
 
 | Word 中显示的宏名 | 源模块 | 用途概览 |
@@ -17,7 +19,7 @@
 
 ## 目录
 
-- `src/`：可继续开发、审阅和重新导入 VBE 的 VBA 源码。
+- `src/`：可继续开发和审阅的 UTF-8 VBA 源码；导入 VBE 前需要按中文 Windows 代码页转换。
 - `dist/PatentTools.dotm`：从 Word 启动目录复制的原始宏模板，作为可运行基线。
 
 ## 来源与筛选
@@ -28,9 +30,8 @@
 - 模板内部模块名使用英文，但实际公开入口宏名均为中文，因此纳入本项目。
 - `Normal.dotm` 以及启动目录中的 `PatentExtractor`、`AutoExport`、`DictModel`、`JsonWriter`、`Patterns` 等英文入口/模块按你的说明视为 CAD 相关宏，已排除，没有复制进本仓库。
 
-导出的 `src/*.bas` 保持 VBA 源码内容，并统一保存为 UTF-8 便于 Git 审阅；`dist/PatentTools.dotm` 保留原始二进制。重新导入 Word 时，建议以 `dist/PatentTools.dotm` 为运行基线，或在 VBE 中逐个导入 `src/` 下的模块。
+导出的 `src/*.bas` 保持 VBA 源码内容，并统一保存为 UTF-8 便于 Git 审阅；`dist/PatentTools.dotm` 保留原始二进制。VBE 对 UTF-8 和中文标识符的支持不可靠，后续构建脚本应先把待导入副本转换为当前中文 Windows 的 ANSI/GBK 代码页，再导入测试模板。不要直接把仓库中的 UTF-8 文件导入正式模板。
 
 ## 后续开发提示
 
 这些宏依赖 Word 对象模型，并使用晚绑定的 `Scripting.Dictionary`、`VBScript.RegExp` 等组件。修改后可先在副本模板中验证，再替换 `dist/PatentTools.dotm`，避免直接影响 Word 的启动加载项。
-
