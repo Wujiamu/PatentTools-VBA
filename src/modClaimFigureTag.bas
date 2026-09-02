@@ -6,6 +6,7 @@ Attribute VB_Name = "modClaimFigureTag"
 ' =================================================================
 
 Option Explicit
+Option Private Module
 
 Sub 权利要求标号()
     On Error GoTo ErrorHandler

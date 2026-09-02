@@ -9,6 +9,9 @@
 # Confidential or non-versioned real application samples
 samples/private/
 
+# Generated VBE import copies and build output
+build/
+
 # Local test/debug output
 *.log
 *.err

@@ -6,6 +6,7 @@ Attribute VB_Name = "modHeaderSync"
 ' =================================================================
 
 Option Explicit
+Option Private Module
 
 Sub 页眉双模式同步()
     Dim doc As Document

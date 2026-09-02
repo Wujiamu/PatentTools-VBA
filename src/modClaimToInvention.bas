@@ -3,6 +3,7 @@ Attribute VB_Name = "modClaimToInvention"
 ' 目标：将选中的权利要求改写为“发明内容”式表述，并尽量保留原段落结构。
 
 Option Explicit
+Option Private Module
 
 Sub 权利要求转发明内容()
     On Error GoTo ErrorHandler

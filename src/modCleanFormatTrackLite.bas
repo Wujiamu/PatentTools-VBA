@@ -6,6 +6,7 @@ Attribute VB_Name = "modCleanFormatTrackLite"
 ' =================================================================
 
 Option Explicit
+Option Private Module
 
 Public Sub 一键改格式_选中部分修改_兼容修订()
     On Error GoTo ErrorHandler

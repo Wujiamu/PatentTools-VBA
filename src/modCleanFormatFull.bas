@@ -6,6 +6,7 @@ Attribute VB_Name = "modCleanFormatFull"
 ' =================================================================
 
 Option Explicit
+Option Private Module
 
 Public Sub 一键改格式_全文修改_不兼容修订()
     On Error GoTo ErrorHandler

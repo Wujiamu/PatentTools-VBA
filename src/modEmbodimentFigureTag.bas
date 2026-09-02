@@ -6,6 +6,7 @@ Attribute VB_Name = "modEmbodimentFigureTag"
 ' =================================================================
 
 Option Explicit
+Option Private Module
 
 Sub 具体实施方式标号()
     On Error GoTo ErrorHandler
