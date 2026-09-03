@@ -15,3 +15,6 @@ build/
 # Local test/debug output
 *.log
 *.err
+
+# Codex local instructions; keep them out of version control
+AGENTS.md
