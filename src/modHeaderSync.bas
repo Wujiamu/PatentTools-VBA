@@ -14,7 +14,8 @@ Sub 页眉双模式同步()
 
     Dim oldTrackRevisions As Boolean
     oldTrackRevisions = doc.TrackRevisions
-
+    Dim undoStarted As Boolean
+    Dim skippedRevisionCount As Long
     On Error GoTo ErrorHandler
 
     Dim response As VbMsgBoxResult
@@ -30,7 +31,7 @@ Sub 页眉双模式同步()
     If response = vbNo Then
         Dim baseHeaderRange As Range
         Set baseHeaderRange = GetBaseHeaderRange(doc)
-        targetCaseNo = ExtractFirstLine(baseHeaderRange.text)
+        targetCaseNo = ExtractFirstLine(baseHeaderRange.Text)
 
         If Len(Trim(targetCaseNo)) = 0 Then
             MsgBox "第一页页眉第一行（案号）为空，无法克隆。", vbExclamation
@@ -43,10 +44,10 @@ Sub 页眉双模式同步()
         End If
 
         Dim baseName As String
-        If InStrRev(doc.name, ".") > 0 Then
-            baseName = Left(doc.name, InStrRev(doc.name, ".") - 1)
+        If InStrRev(doc.Name, ".") > 0 Then
+            baseName = Left(doc.Name, InStrRev(doc.Name, ".") - 1)
         Else
-            baseName = doc.name
+            baseName = doc.Name
         End If
 
         targetCaseNo = ExtractCaseNoFromFileName(baseName)
@@ -56,6 +57,7 @@ Sub 页眉双模式同步()
         End If
     End If
 
+    undoStarted = BeginCustomUndoRecord("页眉双模式同步")
     doc.TrackRevisions = True
 
     Dim sec As Section
@@ -66,22 +68,55 @@ Sub 页眉双模式同步()
     For Each sec In doc.Sections
         For Each hf In sec.Headers
             If hf.Exists Then
-                If UpdateHeaderFirstLine(hf, targetCaseNo) Then modifiedCount = modifiedCount + 1
+                If RangeHasExistingRevision(hf.Range) Then
+                    skippedRevisionCount = skippedRevisionCount + 1
+                ElseIf UpdateHeaderFirstLine(hf, targetCaseNo) Then
+                    modifiedCount = modifiedCount + 1
+                End If
             End If
         Next hf
     Next sec
 
-    MsgBox "处理完成！共更新 " & modifiedCount & " 处页眉。", vbInformation
+    If skippedRevisionCount > 0 Then
+        MsgBox "处理完成！共更新 " & modifiedCount & " 处页眉；跳过 " & skippedRevisionCount & " 处含既有修订的页眉。", vbExclamation
+    Else
+        MsgBox "处理完成！共更新 " & modifiedCount & " 处页眉。", vbInformation
+    End If
 
 CleanExit:
+    EndCustomUndoRecord undoStarted
     doc.TrackRevisions = oldTrackRevisions
     Exit Sub
 
 ErrorHandler:
     On Error Resume Next
+    EndCustomUndoRecord undoStarted
     doc.TrackRevisions = oldTrackRevisions
     MsgBox "页眉处理失败：" & Err.Description, vbCritical
 End Sub
+
+Private Function BeginCustomUndoRecord(ByVal recordName As String) As Boolean
+    On Error Resume Next
+    Err.Clear
+    Application.UndoRecord.StartCustomRecord recordName
+    BeginCustomUndoRecord = (Err.Number = 0)
+    Err.Clear
+End Function
+
+Private Sub EndCustomUndoRecord(ByVal started As Boolean)
+    On Error Resume Next
+    If started Then Application.UndoRecord.EndCustomRecord
+    Err.Clear
+End Sub
+
+Private Function RangeHasExistingRevision(ByVal rng As Range) As Boolean
+    On Error GoTo ConservativeFallback
+    RangeHasExistingRevision = (rng.Revisions.Count > 0)
+    Exit Function
+
+ConservativeFallback:
+    RangeHasExistingRevision = True
+End Function
 
 Private Function GetBaseHeaderRange(ByVal doc As Document) As Range
     Dim firstHeader As HeaderFooter
@@ -116,22 +151,12 @@ Private Function ExtractFirstLine(ByVal fullText As String) As String
 End Function
 
 Private Function ExtractCaseNoFromFileName(ByVal fileName As String) As String
-    Dim regEx As Object
-    Set regEx = CreateObject("VBScript.RegExp")
-    regEx.Global = False
-    regEx.IgnoreCase = True
-    regEx.pattern = "[A-Za-z0-9][A-Za-z0-9_\-]*[A-Za-z0-9]"
-
-    If regEx.Test(fileName) Then
-        ExtractCaseNoFromFileName = regEx.Execute(fileName)(0).value
-    Else
-        ExtractCaseNoFromFileName = ""
-    End If
+    ExtractCaseNoFromFileName = ExtractCaseNoCompat(fileName)
 End Function
 
 Private Function IsRangeEffectivelyEmpty(ByVal rng As Range) As Boolean
     Dim tempText As String
-    tempText = rng.text
+    tempText = rng.Text
     tempText = Replace(tempText, vbCr, "")
     tempText = Replace(tempText, vbLf, "")
     tempText = Replace(tempText, vbTab, "")
@@ -146,7 +171,7 @@ Private Function UpdateHeaderFirstLine(ByVal hf As HeaderFooter, ByVal newCaseNo
     Set hRange = hf.Range.Duplicate
 
     If hRange.Paragraphs.Count = 0 Then
-        hRange.text = newCaseNo
+        hRange.Text = newCaseNo
         hRange.ParagraphFormat.Alignment = wdAlignParagraphRight
         UpdateHeaderFirstLine = True
         Exit Function
@@ -159,7 +184,7 @@ Private Function UpdateHeaderFirstLine(ByVal hf As HeaderFooter, ByVal newCaseNo
     Set paraRange = firstPara.Range.Duplicate
     If paraRange.End > paraRange.Start Then paraRange.End = paraRange.End - 1
 
-    paraRange.text = newCaseNo
+    paraRange.Text = newCaseNo
     firstPara.Range.ParagraphFormat.Alignment = wdAlignParagraphRight
 
     UpdateHeaderFirstLine = True

@@ -24,7 +24,9 @@
 - **源码版**：包含统一的“专利文档工具箱”面板，需要导入 Word 测试模板后使用。
 - **[现有模板](dist/PatentTools.dotm)**：保留六个独立功能宏，尚未包含源码中的工具面板和新入口名称。
 
-目前以 **Windows 桌面版 Microsoft Word** 为运行环境。源码中的部分功能依赖 `Scripting.Dictionary` 和 `VBScript.RegExp`，尚不具备完整的 Mac 兼容实现。
+源码按 **Word 2010 的对象模型和 VBA 语法**编写，Windows 桌面版 Word 仍是主要目标。附图标记、权利要求转换和页眉同步现在通过 `modPatentCompat` 使用纯 VBA 解析与 `Collection` 映射回退；在没有 `Scripting.Dictionary` 或 `VBScript.RegExp` 的环境中不再因为这两个组件直接失败。`Scripting.Dictionary` 仍会在可用时优先使用，但不是必需依赖。
+
+这不等于已经证明所有平台都兼容。当前在本机 Microsoft Word for Mac 上验证了兼容模块的导入、编译和附图标记运行；Mac 的 VBE 对带中文文件名的模块导入曾返回 `&H80004005`，而 `.cls` 导出文件会被当作普通模块导入。Mac 手工测试时请使用脚本的 `-AsciiFileNames` 输出，并在 VBE 中新建 `clsStringMap` 类后导入类代码。尚未有 Word 2010 Windows 虚拟机或实体机的集成结果，不能把本机 Word 版本测试写成 Word 2010 已实测。
 
 ## 使用现有模板
 
@@ -69,7 +71,7 @@
 
 局部处理时使用选区工具；需要统一正文格式时使用全文工具。公式、化学式、网址、英文内容中的标点和符号可能具有实际含义，应在处理后核对。
 
-全文工具在运行时关闭修订，完成后恢复原状态。选区工具在处理部分引号和反引号时也会临时关闭修订，因此“兼容修订”不代表每一处修改都会留下痕迹。必须完整保留修改记录的文档，不宜直接使用这两项格式工具。
+全文无修订版在发现文档已有修订时会停止，避免把既有修订静默改成无修订内容；没有既有修订时才临时关闭修订并在成功、取消和异常路径恢复原状态。选区修订兼容版在修订开启时直接写入，状态栏和撤销记录也会恢复；对反引号、引号等逐项修改会产生修订。标号、权利要求转换和页眉同步会跳过触及既有修订的命中并报告数量，不接受或拒绝用户已有修订。
 
 ## 从源码使用工具面板
 
@@ -79,15 +81,21 @@
 .\scripts\prepare_vbe_import.ps1
 ```
 
-脚本会将源码转换为代码页 936 的导入副本，输出到 `build/vbe-import/`。
+脚本会将源码严格转换为代码页 936 的导入副本，先回读校验，输出到 `build/vbe-import/`；遇到 GBK 无法表示的字符会直接报错，不会静默写入问号。若目标 VBE 对中文文件名处理异常，可使用：
+
+```powershell
+.\scripts\prepare_vbe_import.ps1 -AsciiFileNames
+```
+
+该选项依据 `Attribute VB_Name` 生成 ASCII 文件名，模块内部的中文过程名、提示语和注释仍保持原文。`clsStringMap.cls` 必须作为类模块导入，不能改名后当作标准模块；`ThisDocument.cls` 仍是宿主文档类的导出记录，不作为普通模块导入。
 
 1. 新建一份用于测试的 Word 启用宏的模板（`.dotm`）。
-2. 打开 VBA 编辑器，选中该模板的工程，导入 `build/vbe-import/` 中的全部 `.bas` 文件和 `frmPatentToolbox.frm`。`ThisDocument.cls` 是文档类的导出记录，当前不含业务代码，无需作为普通类模块导入。
+2. 打开 VBA 编辑器，选中该模板的工程，导入 `build/vbe-import/` 中的 `.bas` 文件、`clsStringMap.cls` 和 `frmPatentToolbox.frm`。`ThisDocument.cls` 是文档类的导出记录，当前不含业务代码，无需作为普通类模块导入。
 3. 执行“调试 → 编译 VBAProject”，保存模板。
 4. 加载模板，在 Word 的宏列表中运行 `专利文档工具箱`，通过面板选择功能。
 5. 在文档副本中验证六项功能后，再用于日常文档。
 
-更新过旧版源码、且绑定了旧入口 `专利撰写工具箱` 的快捷键或工具栏按钮，需要重新绑定到 `专利文档工具箱`。
+更新过旧版源码、且绑定了旧入口 `专利撰写工具箱` 的快捷键或工具栏按钮，需要重新绑定到 `专利文档工具箱`。`dist/PatentTools.dotm` 是历史二进制模板，本次源码兼容层和保护规则的变更不会自动写入该文件；导入源码并编译后才能得到包含本次修正的模板。
 
 编码转换脚本只准备导入文件，不会自动生成或更新 `dist/PatentTools.dotm`。当前仓库也未提供覆盖各 Word 版本的兼容性测试结果。
 
@@ -95,7 +103,7 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| [`src/`](src/) | 六项功能的 VBA 源码、工具面板及统一入口 |
+| [`src/`](src/) | 六项功能的 VBA 源码、兼容层、`clsStringMap` 类、工具面板及统一入口 |
 | [`scripts/prepare_vbe_import.ps1`](scripts/prepare_vbe_import.ps1) | 准备中文 Windows VBA 编辑器使用的导入副本 |
 | [`dist/PatentTools.dotm`](dist/PatentTools.dotm) | 尚未集成工具面板的现有模板 |
 | [`metadata/source-manifest.md`](metadata/source-manifest.md) | 原始模板校验值及模块来源记录 |

@@ -20,9 +20,10 @@
 | `src/modHeaderSync.bas` | `modHeaderSync` | `页眉双模式同步` |
 | `src/modCleanFormatFull.bas` | `modCleanFormatFull` | `一键改格式_全文修改_不兼容修订` |
 | `src/modCleanFormatTrackLite.bas` | `modCleanFormatTrackLite` | `一键改格式_选中部分修改_兼容修订` |
+| `src/modPatentCompat.bas` | `modPatentCompat` | 无（兼容层） |
+| `src/clsStringMap.cls` | `clsStringMap` | 无（纯 VBA 映射回退） |
 | `src/ThisDocument.cls` | `ThisDocument` | 无 |
 
 ## 明确排除
 
 按项目范围排除 `Normal.dotm` 和启动目录中的英文宏/测试模块（包括 `PatentExtractor`、`AutoExport`、`DictModel`、`JsonWriter`、`Patterns`、`TestRunner` 等）。
-

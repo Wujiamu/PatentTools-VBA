@@ -22,34 +22,38 @@ Public Sub 一键改格式_选中部分修改_兼容修订()
     Dim oldScreenUpdating As Boolean
     oldScreenUpdating = Application.ScreenUpdating
 
+    Dim oldStatusBar As Variant
+    oldStatusBar = Application.StatusBar
+
+    Dim undoStarted As Boolean
+    undoStarted = BeginCustomUndoRecord("选区格式清理")
+
     Application.ScreenUpdating = False
     Application.StatusBar = "正在清理选中文本..."
 
-    Application.StatusBar = "1/8 清理隐形字符..."
+    Application.StatusBar = "1/7 清理隐形字符..."
     RemoveInvisibleCharacters rng
 
-    Application.StatusBar = "2/8 反单引号标准化..."
+    Application.StatusBar = "2/7 反单引号标准化..."
     NormalizeBacktickPairs rng
 
-    Application.StatusBar = "3/8 清理 Markdown 符号..."
+    Application.StatusBar = "3/7 清理 Markdown 符号..."
     RemoveMarkdownMarksInRange rng
 
-    Application.StatusBar = "4/8 标点标准化..."
+    Application.StatusBar = "4/7 标点标准化..."
     NormalizePunctuationInRange rng
 
-    Application.StatusBar = "5/8 单引号标准化..."
-    NormalizeSingleQuotesInRange rng
-
-    Application.StatusBar = "6/8 双引号标准化..."
+    Application.StatusBar = "5/7 双引号标准化..."
     NormalizeDoubleQuotesInRange rng
 
-    Application.StatusBar = "7/8 中文句号标准化..."
+    Application.StatusBar = "6/7 中文句号标准化..."
     FixChinesePeriodInRange rng
 
-    Application.StatusBar = "8/8 字体标准化..."
+    Application.StatusBar = "7/7 字体标准化..."
     StandardizeFonts rng
 
-    Application.StatusBar = False
+    EndCustomUndoRecord undoStarted
+    Application.StatusBar = oldStatusBar
     Application.ScreenUpdating = oldScreenUpdating
 
     MsgBox "选中文本格式清理完成。", vbInformation
@@ -57,14 +61,29 @@ Public Sub 一键改格式_选中部分修改_兼容修订()
 
 ErrorHandler:
     On Error Resume Next
-    Application.StatusBar = False
+    EndCustomUndoRecord undoStarted
+    Application.StatusBar = oldStatusBar
     Application.ScreenUpdating = oldScreenUpdating
     MsgBox "运行错误：" & Err.Description, vbCritical
 End Sub
 
+Private Function BeginCustomUndoRecord(ByVal recordName As String) As Boolean
+    On Error Resume Next
+    Err.Clear
+    Application.UndoRecord.StartCustomRecord recordName
+    BeginCustomUndoRecord = (Err.Number = 0)
+    Err.Clear
+End Function
+
+Private Sub EndCustomUndoRecord(ByVal started As Boolean)
+    On Error Resume Next
+    If started Then Application.UndoRecord.EndCustomRecord
+    Err.Clear
+End Sub
+
 Private Sub StandardizeFonts(ByVal rng As Range)
     With rng.Font
-        .name = "Times New Roman"
+        .Name = "Times New Roman"
         .NameAscii = "Times New Roman"
         .NameOther = "Times New Roman"
         .NameFarEast = "楷体"
@@ -91,13 +110,9 @@ Private Sub NormalizeBacktickPairs(ByVal baseRange As Range)
     Dim counter As Long
     counter = 0
 
-    Dim wasTracking As Boolean
-    wasTracking = baseRange.Document.TrackRevisions
-    baseRange.Document.TrackRevisions = False
-
     With rng.Find
         .ClearFormatting
-        .text = "`"
+        .Text = "`"
         .Format = False
         .MatchWildcards = False
         .Forward = True
@@ -111,15 +126,13 @@ Private Sub NormalizeBacktickPairs(ByVal baseRange As Range)
         If counter = total And total Mod 2 = 1 Then
             rng.Collapse wdCollapseEnd
         ElseIf counter Mod 2 = 1 Then
-            rng.text = ChrW(&H2018)
+            rng.Text = ChrW(&H2018)
             rng.Collapse wdCollapseEnd
         Else
-            rng.text = ChrW(&H2019)
+            rng.Text = ChrW(&H2019)
             rng.Collapse wdCollapseEnd
         End If
     Loop
-
-    baseRange.Document.TrackRevisions = wasTracking
 End Sub
 
 Private Sub RemoveMarkdownMarksInRange(ByVal baseRange As Range)
@@ -144,12 +157,12 @@ Private Sub CleanMarkdownAtParagraphStart(ByVal para As Paragraph, ByVal limitRa
     If r.End <= r.Start Then Exit Sub
 
     Dim originalText As String
-    originalText = r.text
+    originalText = r.Text
 
     Dim cleaned As String
     cleaned = TrimLeadingMarkdown(originalText)
 
-    If cleaned <> originalText Then r.text = cleaned
+    If cleaned <> originalText Then r.Text = cleaned
 End Sub
 
 Private Function TrimLeadingMarkdown(ByVal text As String) As String
@@ -175,47 +188,13 @@ Private Sub NormalizePunctuationInRange(ByVal baseRange As Range)
     Dim arrFind As Variant
     Dim arrRepl As Variant
 
-    arrFind = Array(",", ";", ":", "?", "!", "(", ")", "<", ">", "[", "]", "/", "@", "#", "$", "%", "&", "+", "=", "|", "~", "^", "{", "}", "-")
-    arrRepl = Array("，", "；", "：", "？", "！", "（", "）", "《", "》", "［", "］", "／", "＠", "＃", "＄", "％", "＆", "＋", "＝", "｜", "～", "＾", "｛", "｝", "－")
+    arrFind = Array(",", ";", ":", "?", "!", "'", "(", ")", "<", ">", "[", "]", "/", "\", "@", "#", "$", "%", "&", "+", "=", "|", "~", "^", "{", "}", "-")
+    arrRepl = Array("，", "；", "：", "？", "！", "’", "（", "）", "《", "》", "［", "］", "／", "＼", "＠", "＃", "＄", "％", "＆", "＋", "＝", "｜", "～", "＾", "｛", "｝", "－")
 
     Dim i As Long
     For i = LBound(arrFind) To UBound(arrFind)
         ReplaceInRange baseRange, CStr(arrFind(i)), CStr(arrRepl(i))
     Next i
-End Sub
-
-Private Sub NormalizeSingleQuotesInRange(ByVal baseRange As Range)
-    Dim rng As Range
-    Set rng = baseRange.Duplicate
-
-    Dim counter As Long
-    counter = 0
-
-    Dim wasTracking As Boolean
-    wasTracking = baseRange.Document.TrackRevisions
-    baseRange.Document.TrackRevisions = False
-
-    With rng.Find
-        .ClearFormatting
-        .text = "'"
-        .Format = False
-        .MatchWildcards = False
-        .Forward = True
-        .Wrap = wdFindStop
-    End With
-
-    Do While rng.Find.Execute
-        If rng.Start < baseRange.Start Or rng.End > baseRange.End Then Exit Do
-        counter = counter + 1
-        If counter Mod 2 = 1 Then
-            rng.text = ChrW(&H2018)
-        Else
-            rng.text = ChrW(&H2019)
-        End If
-        rng.Collapse wdCollapseEnd
-    Loop
-
-    baseRange.Document.TrackRevisions = wasTracking
 End Sub
 
 Private Sub NormalizeDoubleQuotesInRange(ByVal baseRange As Range)
@@ -225,13 +204,9 @@ Private Sub NormalizeDoubleQuotesInRange(ByVal baseRange As Range)
     Dim counter As Long
     counter = 0
 
-    Dim wasTracking As Boolean
-    wasTracking = baseRange.Document.TrackRevisions
-    baseRange.Document.TrackRevisions = False
-
     With rng.Find
         .ClearFormatting
-        .text = """"
+        .Text = """"
         .Format = False
         .MatchWildcards = False
         .Forward = True
@@ -242,14 +217,12 @@ Private Sub NormalizeDoubleQuotesInRange(ByVal baseRange As Range)
         If rng.Start < baseRange.Start Or rng.End > baseRange.End Then Exit Do
         counter = counter + 1
         If counter Mod 2 = 1 Then
-            rng.text = ChrW(&H201C)
+            rng.Text = ChrW(&H201C)
         Else
-            rng.text = ChrW(&H201D)
+            rng.Text = ChrW(&H201D)
         End If
         rng.Collapse wdCollapseEnd
     Loop
-
-    baseRange.Document.TrackRevisions = wasTracking
 End Sub
 
 Private Sub FixChinesePeriodInRange(ByVal baseRange As Range)
@@ -258,7 +231,7 @@ Private Sub FixChinesePeriodInRange(ByVal baseRange As Range)
 
     With rng.Find
         .ClearFormatting
-        .text = "."
+        .Text = "."
         .Format = False
         .MatchWildcards = False
         .Forward = True
@@ -269,8 +242,8 @@ Private Sub FixChinesePeriodInRange(ByVal baseRange As Range)
         If rng.Start < baseRange.Start Or rng.End > baseRange.End Then Exit Do
         If rng.Start > 0 Then
             Dim beforeCh As String
-            beforeCh = rng.Document.Range(rng.Start - 1, rng.Start).text
-            If IsChineseChar(beforeCh) Then rng.text = "。"
+            beforeCh = rng.Document.Range(rng.Start - 1, rng.Start).Text
+            If IsChineseChar(beforeCh) Then rng.Text = "。"
         End If
         rng.Collapse wdCollapseEnd
     Loop
@@ -282,9 +255,9 @@ Private Sub ReplaceInRange(ByVal baseRange As Range, ByVal findText As String, B
 
     With rng.Find
         .ClearFormatting
-        .replacement.ClearFormatting
-        .text = findText
-        .replacement.text = replText
+        .Replacement.ClearFormatting
+        .Text = findText
+        .Replacement.Text = replText
         .Format = False
         .MatchWildcards = False
         .Forward = True
@@ -299,7 +272,7 @@ Private Function CountTextInRange(ByVal baseRange As Range, ByVal findText As St
 
     With rng.Find
         .ClearFormatting
-        .text = findText
+        .Text = findText
         .Format = False
         .MatchWildcards = False
         .Forward = True
@@ -320,5 +293,5 @@ Private Function IsChineseChar(ByVal ch As String) As Boolean
     n = AscW(Left(ch, 1))
     If n < 0 Then n = n + 65536
 
-    IsChineseChar = (n >= &H4E00 And n <= &H9FFF)
+    IsChineseChar = (n >= &H4E00 And n <= 40959)
 End Function

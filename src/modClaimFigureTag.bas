@@ -8,6 +8,8 @@ Attribute VB_Name = "modClaimFigureTag"
 Option Explicit
 Option Private Module
 
+Private Const FIGURE_TAG_CONFLICT As String = "__FIGURE_TAG_CONFLICT__"
+
 Sub 权利要求标号()
     On Error GoTo ErrorHandler
 
@@ -38,6 +40,20 @@ Sub 权利要求标号()
         Exit Sub
     End If
 
+    Dim conflictReport As String
+    conflictReport = FigureTagConflictReport(tagDict)
+    If Len(conflictReport) > 0 Then
+        MsgBox "附图标记说明中存在同名不同标号，已停止自动标注：" & vbCrLf & conflictReport, vbCritical
+        Exit Sub
+    End If
+
+    Dim boundaryReport As String
+    If SelectionBoundaryTouchesKnownName(targetRange, tagDict, boundaryReport) Then
+        MsgBox "选区边界落在已知部件名称中，跨边界命中将跳过：" & vbCrLf & boundaryReport, vbExclamation
+    End If
+
+    Dim undoStarted As Boolean
+    undoStarted = BeginCustomUndoRecord("权利要求标号")
     doc.TrackRevisions = True
 
     Dim protectedRanges As Collection
@@ -54,10 +70,12 @@ Sub 权利要求标号()
     Dim word As String
     Dim code As String
     Dim suffixBlacklist As Object
+    Dim skippedRevisionCount As Long
+    Dim skippedBoundaryCount As Long
 
     For i = LBound(keys) To UBound(keys)
         word = CStr(keys(i))
-        code = CStr(tagDict(word))
+        code = CStr(tagDict.Item(word))
         Set suffixBlacklist = BuildSuffixBlacklist(word, tagDict)
 
         Dim currentFindRange As Range
@@ -65,7 +83,7 @@ Sub 权利要求标号()
 
         With currentFindRange.Find
         .ClearFormatting
-        .text = word
+        .Text = word
         .Format = False
         .MatchCase = False
         .MatchWholeWord = False
@@ -75,10 +93,23 @@ Sub 权利要求标号()
         End With
 
         Do While currentFindRange.Find.Execute
-            If currentFindRange.End > endPosition Then Exit Do
+            If currentFindRange.End > endPosition Then
+                skippedBoundaryCount = skippedBoundaryCount + 1
+                Exit Do
+            End If
+
+            If RangeTouchesExistingRevision(currentFindRange) Then
+                skippedRevisionCount = skippedRevisionCount + 1
+                currentFindRange.Start = currentFindRange.End
+                currentFindRange.End = endPosition
+                GoTo ContinueCurrentMatch
+            End If
 
             If IsInProtectedRange(currentFindRange.Start, protectedRanges) Then GoTo SkipMatch
             If IsStepPrefix(currentFindRange) Then GoTo SkipMatch
+            If IsContainedInLongerTag(currentFindRange, word, tagDict) Then GoTo SkipMatch
+            If IsPreviousTokenChar(currentFindRange) Then GoTo SkipMatch
+            If IsAlreadyTagged(currentFindRange, code, True) Then GoTo SkipMatch
 
             Dim nextChar As String
             nextChar = NextCharAfterRange(currentFindRange)
@@ -89,7 +120,7 @@ Sub 权利要求标号()
 
             Dim insertRange As Range
             Set insertRange = doc.Range(currentFindRange.End, currentFindRange.End)
-            insertRange.text = insertText
+            insertRange.Text = insertText
 
             endPosition = endPosition + Len(insertText)
             UpdateProtectedRanges protectedRanges, insertRange.Start, Len(insertText)
@@ -103,29 +134,71 @@ SkipMatch:
             currentFindRange.End = endPosition
 
 ContinueLoop:
+ContinueCurrentMatch:
         Loop
     Next i
 
+    EndCustomUndoRecord undoStarted
     doc.TrackRevisions = oldTrackRevisions
-    MsgBox "执行完毕：已在权利要求区域补充附图标记。", vbInformation
+    If skippedRevisionCount > 0 Or skippedBoundaryCount > 0 Then
+        MsgBox "执行完毕。已跳过既有修订命中 " & skippedRevisionCount & " 个、选区边界不完整命中 " & skippedBoundaryCount & " 个，请人工检查。", vbExclamation
+    Else
+        MsgBox "执行完毕：已在权利要求区域补充附图标记。", vbInformation
+    End If
     Exit Sub
 
 ErrorHandler:
     On Error Resume Next
+    EndCustomUndoRecord undoStarted
     doc.TrackRevisions = oldTrackRevisions
     MsgBox "运行错误：" & Err.Description, vbCritical
 End Sub
 
-Private Function LoadFigureTagDictionary(ByVal doc As Document) As Object
-    Dim result As Object
-    Set result = CreateObject("Scripting.Dictionary")
+Private Function BeginCustomUndoRecord(ByVal recordName As String) As Boolean
+    On Error Resume Next
+    Err.Clear
+    Application.UndoRecord.StartCustomRecord recordName
+    BeginCustomUndoRecord = (Err.Number = 0)
+    Err.Clear
+End Function
 
+Private Sub EndCustomUndoRecord(ByVal started As Boolean)
+    On Error Resume Next
+    If started Then Application.UndoRecord.EndCustomRecord
+    Err.Clear
+End Sub
+
+Private Function RangeTouchesExistingRevision(ByVal rng As Range) As Boolean
+    On Error GoTo ConservativeFallback
+
+    If rng.Revisions.Count > 0 Then
+        RangeTouchesExistingRevision = True
+        Exit Function
+    End If
+
+    Dim probeStart As Long
+    Dim probeEnd As Long
+    probeStart = rng.Start - 1
+    If probeStart < 0 Then probeStart = 0
+    probeEnd = rng.End + 1
+    If probeEnd > rng.Document.Content.End Then probeEnd = rng.Document.Content.End
+
+    If rng.Document.Range(probeStart, probeEnd).Revisions.Count > 0 Then
+        RangeTouchesExistingRevision = True
+    End If
+    Exit Function
+
+ConservativeFallback:
+    RangeTouchesExistingRevision = True
+End Function
+
+Private Function LoadFigureTagDictionary(ByVal doc As Document) As Object
     Dim searchRange As Range
     Set searchRange = doc.Content.Duplicate
 
     With searchRange.Find
         .ClearFormatting
-        .text = "附图标记说明如下"
+        .Text = "附图标记说明如下"
         .Format = False
         .MatchWildcards = False
         .Forward = True
@@ -133,7 +206,7 @@ Private Function LoadFigureTagDictionary(ByVal doc As Document) As Object
     End With
 
     If Not searchRange.Find.Execute Then
-        Set LoadFigureTagDictionary = result
+        Set LoadFigureTagDictionary = CreateStringMap()
         Exit Function
     End If
 
@@ -144,29 +217,59 @@ Private Function LoadFigureTagDictionary(ByVal doc As Document) As Object
     endPos = FindTagAreaEnd(doc, startPos)
 
     Dim tagText As String
-    tagText = doc.Range(startPos, endPos).text
+    tagText = doc.Range(startPos, endPos).Text
+    Set LoadFigureTagDictionary = ParseFigureTagText(tagText)
+End Function
 
-    Dim regEx As Object
-    Set regEx = CreateObject("VBScript.RegExp")
-    regEx.Global = True
-    regEx.IgnoreCase = True
-    regEx.pattern = "([0-9]+[0-9A-Za-z\.\-]*)\s*[-－—、,:：]?\s*([一-龥A-Za-z]+)"
+Private Function FigureTagConflictReport(ByVal dict As Object) As String
+    Dim key As Variant
+    Dim value As String
+    Dim report As String
 
-    Dim matches As Object
-    Set matches = regEx.Execute(tagText)
-
-    Dim m As Object
-    Dim code As String
-    Dim word As String
-    For Each m In matches
-        code = NormalizeFigureCode(CStr(m.SubMatches(0)))
-        word = Trim(CStr(m.SubMatches(1)))
-        If Len(word) > 0 And word <> "图" Then
-            If Not result.Exists(word) Then result.Add word, code
+    For Each key In dict.Keys
+        value = CStr(dict.Item(key))
+        If Left$(value, Len(FIGURE_TAG_CONFLICT)) = FIGURE_TAG_CONFLICT Then
+            report = report & CStr(key) & "：" & Mid$(value, Len(FIGURE_TAG_CONFLICT) + 2) & vbCrLf
         End If
-    Next m
+    Next key
 
-    Set LoadFigureTagDictionary = result
+    FigureTagConflictReport = report
+End Function
+
+Private Function SelectionBoundaryTouchesKnownName(ByVal targetRange As Range, ByVal tagDict As Object, ByRef detail As String) As Boolean
+    Dim key As Variant
+    Dim word As String
+
+    For Each key In tagDict.Keys
+        word = CStr(key)
+        If NameCrossesBoundary(targetRange.Document, targetRange.Start, word) Then
+            SelectionBoundaryTouchesKnownName = True
+            detail = detail & "选区起点：" & word & vbCrLf
+        End If
+        If NameCrossesBoundary(targetRange.Document, targetRange.End, word) Then
+            SelectionBoundaryTouchesKnownName = True
+            detail = detail & "选区终点：" & word & vbCrLf
+        End If
+    Next key
+End Function
+
+Private Function NameCrossesBoundary(ByVal doc As Document, ByVal boundary As Long, ByVal word As String) As Boolean
+    Dim startPos As Long
+    Dim candidateStart As Long
+    Dim candidateEnd As Long
+
+    startPos = boundary - Len(word) + 1
+    If startPos < 0 Then startPos = 0
+
+    For candidateStart = startPos To boundary - 1
+        candidateEnd = candidateStart + Len(word)
+        If candidateEnd > boundary And candidateEnd <= doc.Content.End Then
+            If doc.Range(candidateStart, candidateEnd).Text = word Then
+                NameCrossesBoundary = True
+                Exit Function
+            End If
+        End If
+    Next candidateStart
 End Function
 
 Private Function NormalizeFigureCode(ByVal rawCode As String) As String
@@ -195,7 +298,7 @@ Private Function FindTagAreaEnd(ByVal doc As Document, ByVal startPos As Long) A
 
     With tagAreaRange.Find
         .ClearFormatting
-        .text = "。"
+        .Text = "。"
         .Format = False
         .MatchWildcards = False
         .Forward = True
@@ -211,7 +314,7 @@ End Function
 
 Private Function SortedKeysByLengthDesc(ByVal dict As Object) As Variant
     Dim keys As Variant
-    keys = dict.keys
+    keys = dict.Keys
 
     Dim i As Long, j As Long
     Dim temp As Variant
@@ -229,20 +332,15 @@ Private Function SortedKeysByLengthDesc(ByVal dict As Object) As Variant
 End Function
 
 Private Sub BuildClaimProtection(ByVal targetRange As Range, ByRef protectedRanges As Collection)
-    Dim claimStartRegEx As Object
-    Set claimStartRegEx = CreateObject("VBScript.RegExp")
-    claimStartRegEx.pattern = "^\s*\d+\s*[\.\．、]"
-    claimStartRegEx.Global = False
-
     Dim invNames As Collection
     Set invNames = New Collection
 
     Dim para As Paragraph
     For Each para In targetRange.Paragraphs
         Dim pText As String
-        pText = para.Range.text
+        pText = para.Range.Text
 
-        If claimStartRegEx.Test(Trim(pText)) Then
+        If IsNumberedClaimLineCompat(pText) Then
             Dim featurePos As Long
             featurePos = InStr(1, pText, "其特征在于", vbTextCompare)
 
@@ -283,7 +381,7 @@ Private Sub AddAllOccurrencesToProtection(ByVal targetRange As Range, ByVal text
 
     With scanRange.Find
         .ClearFormatting
-        .text = textToProtect
+        .Text = textToProtect
         .Format = False
         .MatchCase = False
         .MatchWholeWord = False
@@ -309,10 +407,10 @@ End Sub
 
 Private Function BuildSuffixBlacklist(ByVal word As String, ByVal tagDict As Object) As Object
     Dim result As Object
-    Set result = CreateObject("Scripting.Dictionary")
+    Set result = CreateStringMap()
 
     Dim otherWord As Variant
-    For Each otherWord In tagDict.keys
+    For Each otherWord In tagDict.Keys
         If Len(CStr(otherWord)) > Len(word) Then
             Dim pos As Long
             pos = InStr(1, CStr(otherWord), word, vbTextCompare)
@@ -334,11 +432,6 @@ End Function
 Private Function IsClaimNextCharForbidden(ByVal nextChar As String, ByVal suffixBlacklist As Object) As Boolean
     If nextChar = "" Then Exit Function
 
-    If nextChar = "（" Or nextChar = "(" Then
-        IsClaimNextCharForbidden = True
-        Exit Function
-    End If
-
     If IsAsciiLetterOrDigit(nextChar) Or nextChar = "." Or nextChar = "-" Or nextChar = "－" Then
         IsClaimNextCharForbidden = True
         Exit Function
@@ -347,13 +440,63 @@ Private Function IsClaimNextCharForbidden(ByVal nextChar As String, ByVal suffix
     If suffixBlacklist.Exists(nextChar) Then IsClaimNextCharForbidden = True
 End Function
 
+Private Function IsContainedInLongerTag(ByVal foundRange As Range, ByVal word As String, ByVal tagDict As Object) As Boolean
+    Dim otherWord As Variant
+    Dim offset As Long
+    Dim candidateStart As Long
+    Dim candidateEnd As Long
+
+    For Each otherWord In tagDict.Keys
+        If Len(CStr(otherWord)) > Len(word) Then
+            offset = InStr(1, CStr(otherWord), word, vbTextCompare)
+            Do While offset > 0
+                candidateStart = foundRange.Start - offset + 1
+                candidateEnd = candidateStart + Len(CStr(otherWord))
+
+                If candidateStart >= 0 And candidateEnd <= foundRange.Document.Content.End Then
+                    If foundRange.Document.Range(candidateStart, candidateEnd).Text = CStr(otherWord) Then
+                        IsContainedInLongerTag = True
+                        Exit Function
+                    End If
+                End If
+
+                offset = InStr(offset + 1, CStr(otherWord), word, vbTextCompare)
+            Loop
+        End If
+    Next otherWord
+End Function
+
+Private Function IsPreviousTokenChar(ByVal rng As Range) As Boolean
+    If rng.Start <= 0 Then Exit Function
+    IsPreviousTokenChar = IsAsciiLetterOrDigit(rng.Document.Range(rng.Start - 1, rng.Start).Text)
+End Function
+
+Private Function IsAlreadyTagged(ByVal rng As Range, ByVal code As String, ByVal parenthesized As Boolean) As Boolean
+    If Len(code) = 0 Then Exit Function
+
+    Dim probeEnd As Long
+    probeEnd = rng.End + Len(code) + 4
+    If probeEnd > rng.Document.Content.End Then probeEnd = rng.Document.Content.End
+
+    Dim tail As String
+    tail = rng.Document.Range(rng.End, probeEnd).Text
+    tail = LTrim$(Replace(Replace(tail, ChrW(160), " "), ChrW(12288), " "))
+
+    If parenthesized Then
+        IsAlreadyTagged = (Left$(tail, Len(code) + 2) = "（" & code & "）") Or _
+                          (Left$(tail, Len(code) + 2) = "(" & code & ")")
+    Else
+        IsAlreadyTagged = (Left$(tail, Len(code)) = code)
+    End If
+End Function
+
 Private Function IsStepPrefix(ByVal foundRange As Range) As Boolean
     Dim startPos As Long
     startPos = foundRange.Start - 8
     If startPos < 0 Then startPos = 0
 
     Dim txt As String
-    txt = foundRange.Document.Range(startPos, foundRange.Start).text
+    txt = foundRange.Document.Range(startPos, foundRange.Start).Text
 
     Dim compact As String
     compact = UCase(Trim(Replace(Replace(txt, vbCr, ""), vbLf, "")))
@@ -365,7 +508,7 @@ Private Function NextCharAfterRange(ByVal rng As Range) As String
     If rng.End >= rng.Document.Content.End Then
         NextCharAfterRange = ""
     Else
-        NextCharAfterRange = rng.Document.Range(rng.End, rng.End + 1).text
+        NextCharAfterRange = rng.Document.Range(rng.End, rng.End + 1).Text
     End If
 End Function
 

@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$SourceDirectory = (Join-Path $PSScriptRoot '..\src'),
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\build\vbe-import')
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\build\vbe-import'),
+    [switch]$AsciiFileNames
 )
 
 Set-StrictMode -Version Latest
@@ -21,8 +22,12 @@ if (-not $outputPath.StartsWith($repositoryPath + '\', [System.StringComparison]
 
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
-$utf8 = [System.Text.UTF8Encoding]::new($false)
-$gbk = [System.Text.Encoding]::GetEncoding(936)
+$utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+$gbk = [System.Text.Encoding]::GetEncoding(
+    936,
+    [System.Text.EncoderExceptionFallback]::new(),
+    [System.Text.DecoderExceptionFallback]::new()
+)
 $sourceFiles = @(Get-ChildItem -LiteralPath $sourcePath -File |
     Where-Object { $_.Extension.ToLowerInvariant() -in @('.bas', '.cls', '.frm') } |
     Sort-Object Name)
@@ -32,14 +37,32 @@ if ($sourceFiles.Count -eq 0) {
 }
 
 foreach ($sourceFile in $sourceFiles) {
-    $text = [System.IO.File]::ReadAllText($sourceFile.FullName, $utf8)
+    $sourceBytes = [System.IO.File]::ReadAllBytes($sourceFile.FullName)
+    $text = $utf8.GetString($sourceBytes)
     $text = $text -replace "`r`n", "`n"
     $text = $text -replace "`r", "`n"
     $text = $text -replace "`n", "`r`n"
 
-    $destination = Join-Path $outputPath $sourceFile.Name
-    [System.IO.File]::WriteAllText($destination, $text, $gbk)
-    Write-Output ("Prepared {0}" -f $sourceFile.Name)
+    # 先编码到内存并严格回读，避免将中文静默替换成问号。
+    $encoded = $gbk.GetBytes($text)
+    $roundTrip = $gbk.GetString($encoded)
+    if ($roundTrip -cne $text) {
+        throw "GBK round-trip mismatch: $($sourceFile.Name)"
+    }
+
+    $destinationName = $sourceFile.Name
+    if ($AsciiFileNames) {
+        $moduleName = [regex]::Match($text, '(?m)^Attribute VB_Name = "([^"]+)"').Groups[1].Value
+        if ([string]::IsNullOrWhiteSpace($moduleName)) {
+            $moduleName = $sourceFile.BaseName
+        }
+        $safeName = ($moduleName -replace '[^A-Za-z0-9_.-]', '_')
+        $destinationName = "$safeName$($sourceFile.Extension)"
+    }
+
+    $destination = Join-Path $outputPath $destinationName
+    [System.IO.File]::WriteAllBytes($destination, $encoded)
+    Write-Output ("Prepared {0} -> {1}" -f $sourceFile.Name, $destinationName)
 }
 
 Get-ChildItem -LiteralPath $sourcePath -File -Filter '*.frx' -ErrorAction SilentlyContinue |

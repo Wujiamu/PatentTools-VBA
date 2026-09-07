@@ -22,6 +22,8 @@ Sub 权利要求转发明内容()
         Exit Sub
     End If
 
+    Dim undoStarted As Boolean
+    undoStarted = BeginCustomUndoRecord("权利要求转发明内容")
     doc.TrackRevisions = True
 
     Dim paraCount As Long
@@ -35,7 +37,7 @@ Sub 权利要求转发明内容()
     Dim i As Long
     For i = 1 To paraCount
         Set paraRange(i) = selRange.Paragraphs(i).Range.Duplicate
-        paraText(i) = paraRange(i).text
+        paraText(i) = paraRange(i).Text
     Next i
 
     Dim claimIndexForPara() As Long
@@ -48,7 +50,7 @@ Sub 权利要求转发明内容()
     claimCount = 0
 
     Dim indepDict As Object
-    Set indepDict = CreateObject("Scripting.Dictionary")
+    Set indepDict = CreateStringMap()
 
     Dim currentClaimIdx As Long
     currentClaimIdx = 0
@@ -82,7 +84,7 @@ Sub 权利要求转发明内容()
             claimIsDependent(claimCount) = IsDependentClaimStart(tmp)
 
             If Not claimIsDependent(claimCount) Then
-                If claimNum > 0 Then indepDict(CStr(claimNum)) = True
+                If claimNum > 0 Then indepDict.Item(CStr(claimNum)) = True
             End If
 
         ElseIf IsMeaningfulLine(testText) Then
@@ -103,10 +105,16 @@ Sub 权利要求转发明内容()
     Dim pRange As Range
     Dim newText As String
     Dim idx As Long
+    Dim skippedRevisionCount As Long
 
     For i = paraCount To 1 Step -1
         idx = claimIndexForPara(i)
         If idx = 0 Then GoTo NextPara
+
+        If RangeHasExistingRevision(paraRange(i)) Then
+            skippedRevisionCount = skippedRevisionCount + 1
+            GoTo NextPara
+        End If
 
         newText = RewriteClaimParagraph( _
             paraText(i), _
@@ -117,21 +125,50 @@ Sub 权利要求转发明内容()
 
         Set pRange = paraRange(i).Duplicate
         If pRange.End > pRange.Start Then pRange.End = pRange.End - 1
-        pRange.text = newText
+        pRange.Text = newText
 
 NextPara:
     Next i
 
+    EndCustomUndoRecord undoStarted
     doc.TrackRevisions = oldTrackRevisions
-    MsgBox "完成：权利要求已转换为发明内容表述。", vbInformation
+    If skippedRevisionCount > 0 Then
+        MsgBox "完成。已跳过 " & skippedRevisionCount & " 个含既有修订的段落，请人工转换。", vbExclamation
+    Else
+        MsgBox "完成：权利要求已转换为发明内容表述。", vbInformation
+    End If
     Exit Sub
 
 ErrorHandler:
     On Error Resume Next
+    EndCustomUndoRecord undoStarted
     doc.TrackRevisions = oldTrackRevisions
     MsgBox "运行错误：" & Err.Description, vbCritical
 
 End Sub
+
+Private Function BeginCustomUndoRecord(ByVal recordName As String) As Boolean
+    On Error Resume Next
+    Err.Clear
+    Application.UndoRecord.StartCustomRecord recordName
+    BeginCustomUndoRecord = (Err.Number = 0)
+    Err.Clear
+End Function
+
+Private Sub EndCustomUndoRecord(ByVal started As Boolean)
+    On Error Resume Next
+    If started Then Application.UndoRecord.EndCustomRecord
+    Err.Clear
+End Sub
+
+Private Function RangeHasExistingRevision(ByVal rng As Range) As Boolean
+    On Error GoTo ConservativeFallback
+    RangeHasExistingRevision = (rng.Revisions.Count > 0)
+    Exit Function
+
+ConservativeFallback:
+    RangeHasExistingRevision = True
+End Function
 
 Private Function RewriteClaimParagraph( _
     ByVal src As String, _
@@ -158,8 +195,6 @@ Private Function RewriteClaimParagraph( _
     text = Replace(text, "为前述的", "前述的")
     text = Replace(text, "所述", "")
 
-    text = Replace(text, "在步骤S3之前，控制方法还包括如下步骤", "在步骤S1之前，控制方法还包括如下步骤")
-
     text = RemoveAllSpaces(text)
     text = TrimLeadingPunctuation(text)
     text = FixEndingPunctuation(text)
@@ -168,7 +203,7 @@ Private Function RewriteClaimParagraph( _
         If isDependent Then
             text = "在一些实施例中，" & text
         ElseIf prefixMap.Exists(CStr(claimNum)) Then
-            text = CStr(prefixMap(CStr(claimNum))) & text
+            text = CStr(prefixMap.Item(CStr(claimNum))) & text
         Else
             text = "本发明提供" & text
         End If
@@ -207,18 +242,16 @@ Private Function TextAfterFeatureMarker(ByVal text As String) As String
         End If
     Next marker
 
-    TextAfterFeatureMarker = RegexReplace(text, "^(如|根据)权利要求\s*\d+\s*([至到\-－—~～]\s*\d+)?\s*(中任一项|任一项)?[^，。；：:]*[，,:：]?\s*", "")
+    TextAfterFeatureMarker = StripClaimReferencePrefixCompat(text)
 End Function
 
 Private Function ReplaceClaimReferences(ByVal text As String) As String
-    text = RegexReplace(text, "(如|根据)权利要求\s*\d+\s*([至到\-－—~～]\s*\d+)?\s*(中任一项|任一项)?[^，。；：:]*所述", "前述")
-    text = RegexReplace(text, "权利要求\s*\d+\s*([至到\-－—~～]\s*\d+)?\s*(中任一项|任一项)?[^，。；：:]*所述", "前述的")
-    ReplaceClaimReferences = text
+    ReplaceClaimReferences = ReplaceClaimReferencesCompat(text)
 End Function
 
 Private Function BuildIndependentPrefixMap(ByVal indepDict As Object) As Object
     Dim result As Object
-    Set result = CreateObject("Scripting.Dictionary")
+    Set result = CreateStringMap()
 
     If indepDict.Count = 0 Then
         Set BuildIndependentPrefixMap = result
@@ -226,7 +259,7 @@ Private Function BuildIndependentPrefixMap(ByVal indepDict As Object) As Object
     End If
 
     Dim keys As Variant
-    keys = indepDict.keys
+    keys = indepDict.Keys
 
     Dim i As Long, j As Long
     Dim t As Variant
@@ -243,11 +276,11 @@ Private Function BuildIndependentPrefixMap(ByVal indepDict As Object) As Object
     For i = LBound(keys) To UBound(keys)
         Select Case i - LBound(keys) + 1
             Case 1
-                result(CStr(keys(i))) = "本发明提供"
+                result.Item(CStr(keys(i))) = "本发明提供"
             Case 2
-                result(CStr(keys(i))) = "本发明还提供"
+                result.Item(CStr(keys(i))) = "本发明还提供"
             Case Else
-                result(CStr(keys(i))) = "本发明另提供"
+                result.Item(CStr(keys(i))) = "本发明另提供"
         End Select
     Next i
 
@@ -273,29 +306,24 @@ End Function
 Private Function IsValidClaimLine(ByVal text As String) As Boolean
     text = CleanParaText(text)
     If text = "" Then Exit Function
-    IsValidClaimLine = RegexTest(text, "^\s*\d+\s*[\.\．、]")
+    IsValidClaimLine = IsNumberedClaimLineCompat(text)
 End Function
 
 Private Function ClaimNumberFromText(ByVal text As String) As Long
-    Dim re As Object
-    Set re = CreateObject("VBScript.RegExp")
-    re.Global = False
-    re.pattern = "^\s*(\d+)"
-
-    If re.Test(text) Then
-        ClaimNumberFromText = CLng(re.Execute(text)(0).SubMatches(0))
-    Else
-        ClaimNumberFromText = 0
-    End If
+    ClaimNumberFromText = LeadingClaimNumberCompat(text)
 End Function
 
 Private Function RemoveClaimNumber(ByVal text As String) As String
-    RemoveClaimNumber = RegexReplace(text, "^\s*\d+\s*[\.\．、]?\s*", "")
+    RemoveClaimNumber = RemoveLeadingClaimNumberCompat(text)
 End Function
 
 Private Function IsDependentClaimStart(ByVal text As String) As Boolean
     text = Trim(text)
-    IsDependentClaimStart = (text Like "如权利要求*") Or (text Like "根据权利要求*")
+    text = Replace(text, " ", "")
+    text = Replace(text, vbTab, "")
+    text = Replace(text, ChrW(160), "")
+    text = Replace(text, ChrW(12288), "")
+    IsDependentClaimStart = (Left$(text, 5) = "如权利要求") Or (Left$(text, 6) = "根据权利要求")
 End Function
 
 Private Function IsMeaningfulLine(ByVal text As String) As Boolean
@@ -320,7 +348,7 @@ Private Function IsStopHeadingLine(ByVal text As String) As Boolean
 End Function
 
 Private Function RemoveDrawingNumbers(ByVal text As String) As String
-    RemoveDrawingNumbers = RegexReplace(text, "[(（][0-9A-Za-z]+[)）]", "")
+    RemoveDrawingNumbers = RemoveDrawingNumbersCompat(text)
 End Function
 
 Private Function TrimLeadingPunctuation(ByVal text As String) As String
@@ -347,22 +375,4 @@ Private Function FixEndingPunctuation(ByVal text As String) As String
     End If
 
     FixEndingPunctuation = text
-End Function
-
-Private Function RegexReplace(ByVal text As String, ByVal pattern As String, ByVal replacement As String) As String
-    Dim re As Object
-    Set re = CreateObject("VBScript.RegExp")
-    re.Global = True
-    re.IgnoreCase = False
-    re.pattern = pattern
-    RegexReplace = re.Replace(text, replacement)
-End Function
-
-Private Function RegexTest(ByVal text As String, ByVal pattern As String) As Boolean
-    Dim re As Object
-    Set re = CreateObject("VBScript.RegExp")
-    re.Global = False
-    re.IgnoreCase = False
-    re.pattern = pattern
-    RegexTest = re.Test(text)
 End Function
