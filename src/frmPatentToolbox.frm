@@ -1,13 +1,13 @@
 VERSION 5.00
 Begin VB.UserForm frmPatentToolbox
-   Caption         =   "专利撰写工具箱"
+   Caption         =   "专利文档工具箱"
    ClientHeight    =   6900
    ClientLeft      =   120
    ClientTop       =   450
    ClientWidth     =   7800
    StartUpPosition =   1  'CenterOwner
    Begin MSForms.Label lblTitle
-      Caption         =   "专利撰写工具箱"
+      Caption         =   "专利文档工具箱"
       Height          =   360
       Left            =   240
       Top             =   180
@@ -146,7 +146,7 @@ Private mBusy As Boolean
 Private mCloseRequested As Boolean
 
 Private Sub UserForm_Initialize()
-    Me.Caption = "专利撰写工具箱"
+    Me.Caption = "专利文档工具箱"
     lblStatus.Caption = "就绪。"
     UpdateDocumentInfo
 End Sub
@@ -225,7 +225,7 @@ Private Sub RunToolFromButton(ByVal toolId As String)
 ErrorHandler:
     mBusy = False
     If Not mCloseRequested Then Me.Show vbModeless
-    MsgBox "面板调用失败：" & Err.Description, vbCritical, "专利撰写工具箱"
+    MsgBox "面板调用失败：" & Err.Description, vbCritical, "专利文档工具箱"
 End Sub
 
 Private Sub UpdateDocumentInfo()

@@ -35,5 +35,5 @@ Public Function RunPatentTool(ByVal toolId As String) As Boolean
 
 ErrorHandler:
     RunPatentTool = False
-    MsgBox "工具执行失败：" & Err.Description, vbCritical, "专利撰写工具箱"
+    MsgBox "工具执行失败：" & Err.Description, vbCritical, "专利文档工具箱"
 End Function
